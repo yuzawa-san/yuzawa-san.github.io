@@ -63,6 +63,9 @@
         Object.values(dataJson).forEach(data => {
           let testEwma = 0;
           let caseEwma = 0;
+          if (!data.rows) {
+            return;
+          }
           data.rows = data.rows.map(row => {
             let ymd = row[0];
             let timestampMs = new Date(`${ymd}T00:00:00`).getTime();
