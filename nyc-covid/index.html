@@ -1,0 +1,337 @@
+  <!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>NYC Covid-19 by ZIP</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.6.0/dist/leaflet.css" integrity="sha512-xwE/Az9zrjBIphAcBb3F6JVqxf46+CDLwfLMHloNu6KEQCAWi6HcDUbeOfBIptF7tcCzusKFjFw2yuvEpDL9wQ==" crossorigin=""/>
+        <script src="https://unpkg.com/leaflet@1.6.0/dist/leaflet.js" integrity="sha512-gZwIG9x3wUXg2hdXF6+rVkLF/0Vi9U8D2Ntg4Ga5I5BZpVkVxlJWbSQtXPSiUTtC0TjtGOmxa1AJPuV0CPthew==" crossorigin=""></script>
+    
+
+    <script src="https://unpkg.com/topojson@3.0.2/dist/topojson.min.js"></script>
+    <script src="https://unpkg.com/chroma-js@2.1.0/chroma.min.js"></script>
+    
+    <script src="https://unpkg.com/@fnando/sparkline@0.3.10/dist/sparkline.js"></script>
+    <style type="text/css">
+      html, body {
+        height: 100%;
+        margin: 0;
+      }
+      #map-container {
+        width: 100%;
+        height: 100%;
+      }
+      .info { padding: 6px 8px; font: 14px/16px Arial, Helvetica, sans-serif; background: white; background: rgba(255,255,255,1.0); box-shadow: 0 0 15px rgba(0,0,0,0.2); border-radius: 5px; } .info h4 { margin: 0 0 5px; color: #777; }
+      .legend { text-align: left; line-height: 18px; color: #555; } .legend i { width: 18px; height: 18px; float: left; margin-right: 8px; opacity: 0.7; }
+      @media only screen and (max-width: 600px) {
+        .info {font-size:10px;padding:2px;margin:2px;line-height:1em;}
+        .legend {display:none;}
+      }
+    </style>
+  </head>
+  <body>
+    
+    <div id="map-container"></div>
+    <script>
+      const ALPHA = 0.1;
+      const COLORS = chroma.scale([
+        "#FFFFCE",
+        "#C8E8B6",
+        "#84CDBB",
+        "#48B6C2",
+        "#3380B6",
+        "#283891"
+      ]);
+      
+      function prettyValue(value){
+        if(!isFinite(value)) {
+          return "n/a";
+        }
+        if(Math.abs(value) < 1e-2){
+          return value;
+        }
+        return value.toFixed(2);
+      }
+      async function getGeoData() {
+        let dataResponse = await fetch('nyc.json');
+        let dataJson = await dataResponse.json();
+        let shapeResponse = await fetch('nyc.topo.json');
+        let shapeJson = await shapeResponse.json();
+        
+        let minYmd = '2099-01-01';
+        let maxYmd = '2000-01-01';
+        Object.values(dataJson).forEach(data => {
+          let testEwma = 0;
+          let caseEwma = 0;
+          data.rows = data.rows.map(row => {
+            let ymd = row[0];
+            let timestampMs = new Date(`${ymd}T00:00:00`).getTime();
+            if (ymd < minYmd) {
+              minYmd = ymd;
+            }
+            if (ymd > maxYmd) {
+              maxYmd = ymd
+            }
+            let cases = row[1];
+            let tests = row[2];
+            testEwma = ALPHA * tests + (1-ALPHA) * testEwma;
+            caseEwma = ALPHA * cases + (1-ALPHA) * caseEwma;
+            return {
+              ymd,
+              timestampMs,
+              cases,
+              tests,
+              testEwma,
+              caseEwma
+            }
+          });
+        });
+        
+        
+        shapeJson.objects.collection.geometries.forEach(x=> {
+          let {properties} = x;
+          properties.data = dataJson[properties.MODZCTA];
+        });
+        
+        let map = L.map('map-container');
+        let bglayer_Positron = L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/light_all/{z}/{x}/{y}{r}.png', {
+          attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="http://cartodb.com/attributions">CartoDB</a> &copy; <a href="https://github.com/nychealth/coronavirus-data">NYC Health Department</a> | built by <a href="https://github.com/yuzawa-san">yuzawa-san</a> (not a public health expert)',
+          subdomains: 'abcd',
+          maxZoom: 19
+        });
+      
+        bglayer_Positron.addTo(map);
+        
+        let selector = L.control({position: 'topright'});
+        selector.onAdd = function (map) {
+          let div = L.DomUtil.create('div', 'info selectors');
+          div.innerHTML = '<b>NYC Covid-19 by ZIP</b><br>Date: <input type="date" id="end"><br>'+
+          'Lookback: <select id="lookback"><option value="3">3 days</option><option value="7">1 week</option><option value="14" selected>2 weeks</option><option value="30">1 month</option><option value="1000">all-time</option></select><br>'+
+          'Metric: <select id="analysis"><option>normalizedNewPositiveTests</option><option>normalizedNewTests</option><option>positiveTestRatePercent</option></select><br>' +
+          '<button id="locate">Go to My Location</button>';
+          return div;
+        };
+        selector.addTo(map);
+        
+        let lookbackEl = document.getElementById('lookback');
+        let endEl = document.getElementById('end');
+        let analysisEl = document.getElementById('analysis');
+        endEl.min = minYmd;
+        endEl.max = maxYmd;
+        endEl.value = maxYmd;
+        
+        let legend = L.control({position: 'bottomleft'});
+        let legendDiv = L.DomUtil.create('div', 'info legend');
+        legend.onAdd = function (map) {
+          return legendDiv;
+        };
+        legend.addTo(map);
+        
+        let info = L.control({position: 'topright'});
+
+        info.onAdd = function (map) {
+          this._div = L.DomUtil.create('div', 'info');
+          this.update();
+          return this._div;
+        };
+
+        info.update = function (props) {
+          if (!props) {
+            this._div.innerHTML = "Click on a ZIP code";
+            return;
+          }
+          const {properties} = props.feature;
+          let caseLine = document.createElement("SVG");
+          caseLine.setAttribute('width',100);
+          caseLine.setAttribute('height',20);
+          caseLine.setAttribute('stroke','red');
+          caseLine.setAttribute('fill','pink');
+          caseLine.setAttribute('stroke-width',1);
+          sparkline.sparkline(caseLine, properties.caseSeries || []);
+          let testLine = document.createElement("SVG");
+          testLine.setAttribute('width',100);
+          testLine.setAttribute('height',20);
+          testLine.setAttribute('stroke','blue');
+          testLine.setAttribute('fill','lightblue');
+          testLine.setAttribute('stroke-width',1);
+          sparkline.sparkline(testLine, properties.testSeries || []);
+          let positiveRateLine = document.createElement("SVG");
+          positiveRateLine.setAttribute('width',100);
+          positiveRateLine.setAttribute('height',20);
+          positiveRateLine.setAttribute('stroke','green');
+          positiveRateLine.setAttribute('fill','lightgreen');
+          positiveRateLine.setAttribute('stroke-width',1);
+          sparkline.sparkline(positiveRateLine, properties.positiveRateSeries || []);
+          this._div.innerHTML = '<div><b>'+properties.MODZCTA+':<br>'+properties.data.name.replace(/\//g,'<br>')+'</b><br>'+analysisEl.value+':<br>'+prettyValue(properties.value)+'<br>New Case trend:<br>'+caseLine.outerHTML+'<br>Test trend:<br>'+testLine.outerHTML+'<br>Positive Test Rate trend:<br>'+positiveRateLine.outerHTML+'</div>';
+        };
+
+      	info.addTo(map);
+      
+        L.TopoJSON = L.GeoJSON.extend({
+          addData: function (data) {
+            let geojson, key;
+            if (data.type === "Topology") {
+              for (key in data.objects) {
+                if (data.objects.hasOwnProperty(key)) {
+                  geojson = topojson.feature(data, data.objects[key]);
+                  L.GeoJSON.prototype.addData.call(this, geojson);
+                }
+              }
+              return this;
+            }
+            L.GeoJSON.prototype.addData.call(this, data);
+            return this;
+          }
+        });
+        L.topoJson = function (data, options) {
+          return new L.TopoJSON(data, options);
+        };
+        let geojson = L.topoJson(shapeJson, {
+          style: function(feature){
+            return {
+              color: "#000",
+              opacity: 1,
+              weight: 1,
+              fillColor: '#fff',
+              fillOpacity: 0.7
+            }
+          }
+        }).addTo(map);
+        map.fitBounds(geojson.getBounds());
+        
+        let accumulate = function(rows) {
+          const sum = {
+            cases:0,
+            tests:0
+          };
+          rows.forEach(x => {
+            sum.cases += x.cases;
+            sum.tests += x.tests;
+          })
+          return sum;
+        };
+        let analyses = {
+          normalizedNewTests: function(rows, data) {
+            const sum = accumulate(rows);
+            return sum.tests / data.population * 100000;
+          },
+          normalizedNewPositiveTests: function(rows, data) {
+            const sum = accumulate(rows);
+            return sum.cases / data.population * 100000;
+          },
+          positiveTestRatePercent: function(rows, data) {
+            const sum = accumulate(rows);
+            return sum.cases / sum.tests * 100;
+          }
+        }
+        let selection = null;
+        geojson.eachLayer(function(layer) {
+          layer.on({
+            click: function(e) {
+              const layer = e.target;
+              if (selection) {
+                selection.setStyle({weight:1});
+                if (selection == layer) {
+                  info.update();
+                  selection = null;
+                  return;
+                }
+              }
+              layer.setStyle({weight:3});
+              layer.bringToFront();
+              info.update(layer);
+              selection = layer;
+            }
+          });
+        });
+        
+        function redraw() {
+          let analysis = analysisEl.value;
+          let lookback = parseInt(lookbackEl.value) * 86400000;
+          let end = new Date(endEl.value+"T00:00:00").getTime();
+          let start = end - lookback;
+          let values = [];
+          let modzctaValues = {};
+          let modzctaTests = {};
+          let modzctaCases = {};
+          geojson.eachLayer(function (layer) {
+            const {properties} = layer.feature;
+            const modzcta = properties.MODZCTA;
+            const {data} = properties;
+            if (!data) {
+              return;
+            }
+            const rows = data.rows.filter(x => {
+              const {timestampMs} = x;
+              return timestampMs >= start && timestampMs <= end;
+            });
+            let testSum = 0;
+            let caseSum = 0;
+            properties.testSeries = [];
+            properties.caseSeries = [];
+            properties.positiveRateSeries = [];
+            rows.forEach(row => {
+              properties.testSeries.push(row.testEwma);
+              properties.caseSeries.push(row.caseEwma);
+              properties.positiveRateSeries.push(row.caseEwma / row.testEwma);
+            });
+            const value = analyses[analysis](rows, data);
+            if (isFinite(value)) {
+              values.push(value);
+              
+            }
+            properties.value = value;
+          });
+          values.sort(function(a,b){
+            return a-b;
+          });
+          const ntiles = 10;
+          let ntileBins = [];
+          for (let i = 0; i < ntiles; i++) {
+            let idx = Math.round(values.length * (i/ntiles));
+            ntileBins.push(values[idx]);
+          }
+          ntileBins.push(values[values.length - 1]);
+          
+          let color = function(value) {
+            let start = values[0];
+            for (let i = 1; i < ntileBins.length; i++) {
+              let ntileMax = ntileBins[i];
+              if (value <= ntileMax) {
+                let percentage = (value - start) / (ntileMax - start);
+                return COLORS((i - 1 + percentage) / ntiles).hex();
+              }
+              start = ntileMax;
+            }
+            return 'rgba(0,0,0,0)';
+          }
+          
+          let legendLabels = []
+          for (let i = 0; i < ntileBins.length; i++) {
+            let value = ntileBins[i];
+            legendLabels.push('<i style="background:'+color(value)+'"></i> '+prettyValue(value));
+          }
+          legendDiv.innerHTML = legendLabels.join("<br>");
+          
+          
+          geojson.eachLayer(function (layer) {
+            const {properties} = layer.feature;
+            const modzcta = properties.MODZCTA;
+            const value = properties.value;
+            layer.setStyle({fillColor: color(value)});
+          });
+          info.update(selection);
+        }
+        lookbackEl.onchange = redraw;
+        endEl.onchange = redraw;
+        analysisEl.onchange = redraw;
+        redraw();
+        document.getElementById('locate').onclick = function() {
+          map.locate({setView: true, maxZoom: 13});
+        };
+      }
+      
+      getGeoData();
+    </script>
+  </body>
+</html>
