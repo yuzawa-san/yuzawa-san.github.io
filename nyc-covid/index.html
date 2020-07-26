@@ -43,14 +43,26 @@
       <div id="controls">
         <div><b>NYC COVID-19 by ZIP Code</b></div>
         <div>Date: <input type="date" id="end"></div>
-        <div>Lookback: <select id="lookback"><option value="3">3 days</option><option value="7">1 week</option><option value="14" selected>2 weeks</option><option value="30">1 month</option><option value="1000">all-time</option></select></div>
-        <div>Metric: <select id="analysis"><option>normalizedNewPositiveTests</option><option>normalizedNewTests</option><option>positiveTestRatePercent</option></select></div>
+        <div>Lookback: <select id="lookback">
+            <option value="3">3 days</option>
+            <option value="7">1 week</option>
+            <option value="14" selected>2 weeks</option>
+            <option value="30">1 month</option>
+            <option value="1000">all-time</option>
+          </select></div>
+        <div>Metric: <select id="analysis">
+          <option>newCases</option>
+          <option>newCasesTrend</option>
+          <option>positiveTestPercent</option>
+          <option>positiveTestPercentTrend</option>
+          <option>newTests</option>
+          <option>newTestsTrend</option>
+        </select></div>
         <div><button id="locate">Go to My Location</button></div>
       </div>
       <div id="map-container"></div>
     </div>
     <script>
-      const ALPHA = 0.1;
       const COLORS = chroma.scale([
         "#FFFFCE",
         "#C8E8B6",
@@ -59,13 +71,12 @@
         "#3380B6",
         "#283891"
       ]);
+      const GREEN_GRADIENT = chroma.scale(['green', 'white']);
+      const RED_GRADIENT = chroma.scale(['white', 'red']);
       
       function prettyValue(value){
         if(!isFinite(value)) {
           return "n/a";
-        }
-        if(Math.abs(value) < 1e-2){
-          return value;
         }
         return value.toFixed(2);
       }
@@ -77,9 +88,8 @@
         
         let minYmd = '2099-01-01';
         let maxYmd = '2000-01-01';
+        let windowSize = 7;
         Object.values(dataJson).forEach(data => {
-          let testEwma = 0;
-          let caseEwma = 0;
           if (!data.rows) {
             return;
           }
@@ -94,17 +104,29 @@
             }
             let cases = row[1];
             let tests = row[2];
-            testEwma = ALPHA * tests + (1-ALPHA) * testEwma;
-            caseEwma = ALPHA * cases + (1-ALPHA) * caseEwma;
             return {
               ymd,
               timestampMs,
               cases,
-              tests,
-              testEwma,
-              caseEwma
+              tests
             }
           });
+          for (let i = 0; i < data.rows.length; i++) {
+            let row = data.rows[i];
+            const start = i - windowSize;
+            const from = start >= 0 ? start : 0;
+            const to = i + windowSize + 1;
+            let count = 0;
+            let sumTests = 0;
+            let sumCases = 0;
+            for (let j = from; j < to && j < data.rows.length; j += 1) {
+              sumTests += data.rows[j].tests;
+              sumCases += data.rows[j].cases;
+              count += 1;
+            }
+            row.testEwma = sumTests / count;
+            row.caseEwma = sumCases / count;
+          }
         });
         
         
@@ -184,19 +206,71 @@
           })
           return sum;
         };
+        const regress = (x, y) => {
+            const n = y.length;
+            let sx = 0;
+            let sy = 0;
+            let sxy = 0;
+            let sxx = 0;
+            let syy = 0;
+            for (let i = 0; i < n; i++) {
+                sx += x[i];
+                sy += y[i];
+                sxy += x[i] * y[i];
+                sxx += x[i] * x[i];
+                syy += y[i] * y[i];
+            }
+            const mx = sx / n;
+            const my = sy / n;
+            const yy = n * syy - sy * sy;
+            const xx = n * sxx - sx * sx;
+            const xy = n * sxy - sx * sy;
+            const slope = xy / xx;
+            const intercept = my - slope * mx;
+            const r = xy / Math.sqrt(xx * yy);
+            const r2 = Math.pow(r,2);
+            let sst = 0;
+            for (let i = 0; i < n; i++) {
+               sst += Math.pow((y[i] - my), 2);
+            }
+            const sse = sst - r2 * sst;
+            const see = Math.sqrt(sse / (n - 2));
+            const ssr = sst - sse;
+            return {slope, intercept, r, r2, sse, ssr, sst, sy, sx, see};
+        };
+        let trend = function(extract){
+          return function(rows, data, days) {
+            let x = [];
+            let y = [];
+            for (let i = 0 ; i < rows.length; i++) {
+              x.push(rows[i].timestampMs);
+              y.push(extract(rows[i], data));
+            }
+            return regress(x,y).slope * 86400000;
+          }
+        }
         let analyses = {
-          normalizedNewTests: function(rows, data) {
+          newCases: function(rows, data, days) {
             const sum = accumulate(rows);
-            return sum.tests / data.population * 100000;
+            return (sum.cases / days) / data.population * 100000;
           },
-          normalizedNewPositiveTests: function(rows, data) {
-            const sum = accumulate(rows);
-            return sum.cases / data.population * 100000;
-          },
-          positiveTestRatePercent: function(rows, data) {
+          newCasesTrend: trend(function(row, data) {
+            return row.caseEwma / data.population * 100000;
+          }),
+          positiveTestPercent: function(rows, data, days) {
             const sum = accumulate(rows);
             return sum.cases / sum.tests * 100;
-          }
+          },
+          positiveTestPercentTrend: trend(function(row, data) {
+            return row.caseEwma / row.testEwma * 100;
+          }),
+          newTests: function(rows, data, days) {
+            const sum = accumulate(rows);
+            return (sum.tests / days) / data.population * 100000;
+          },
+          newTestsTrend: trend(function(row, data) {
+            return row.testEwma / data.population * 100000;
+          })
         }
         let selection = null;
         geojson.eachLayer(function(layer) {
@@ -215,7 +289,8 @@
         
         function redraw() {
           let analysis = analysisEl.value;
-          let lookback = parseInt(lookbackEl.value) * 86400000;
+          let days = parseInt(lookbackEl.value);
+          let lookback = days * 86400000;
           let end = new Date(endEl.value+"T00:00:00").getTime();
           let start = end - lookback;
           let values = [];
@@ -243,7 +318,7 @@
               properties.caseSeries.push(row.caseEwma);
               properties.positiveRateSeries.push(row.caseEwma / row.testEwma);
             });
-            const value = analyses[analysis](rows, data);
+            const value = analyses[analysis](rows, data, days);
             if (isFinite(value)) {
               values.push(value);
               
