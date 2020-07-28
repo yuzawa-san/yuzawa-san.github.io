@@ -45,8 +45,8 @@
         <div>Date: <input type="date" id="end"></div>
         <div>Lookback: <select id="lookback">
             <option value="3">3 days</option>
-            <option value="7">1 week</option>
-            <option value="14" selected>2 weeks</option>
+            <option value="7" selected>1 week</option>
+            <option value="14">2 weeks</option>
             <option value="30">1 month</option>
             <option value="1000">all-time</option>
           </select></div>
@@ -63,7 +63,7 @@
       <div id="map-container"></div>
     </div>
     <script>
-      const COLORS = chroma.scale([
+      const GRADIENT = chroma.scale([
         "#FFFFCE",
         "#C8E8B6",
         "#84CDBB",
@@ -71,8 +71,8 @@
         "#3380B6",
         "#283891"
       ]);
-      const GREEN_GRADIENT = chroma.scale(['green', 'white']);
-      const RED_GRADIENT = chroma.scale(['white', 'red']);
+      const GOOD_GRADIENT = chroma.scale(['#1a9641', '#a6d96a', '#ffffbf']);
+      const BAD_GRADIENT = chroma.scale(['#ffffbf', '#fdae61', '#d7191c']);
       
       function prettyValue(value){
         if(!isFinite(value)) {
@@ -272,6 +272,61 @@
             return row.testEwma / data.population * 100000;
           })
         }
+        let colorScale = function(values, trend) {
+          let ntiles = trend ? 5 : 10;
+          let negatives = [];
+          let positives = [];
+          for (let i = 0; i < values.length; i++) {
+            let value  = values[i];
+            if (value > 0 || !trend) {
+              positives.push(value);
+            } else {
+              negatives.push(value);
+            }
+          }
+          let generateNtiles = function(lst) {
+            let len = lst.length;
+            let out = [];
+            if (!len) {
+              return out;
+            }
+            for (let i = 0; i < ntiles; i++) {
+              let idx = Math.round(len * (i/ntiles));
+              out.push(lst[idx]);
+            }
+            out.push(lst[len - 1]);
+            return out;
+          }
+          let negativeNTiles = generateNtiles(negatives);
+          let positiveNTiles = generateNtiles(positives);
+          return {
+            color: function(value) {
+              if (trend) {
+                if (value > 0){
+                  fn = BAD_GRADIENT;
+                  ntileBins = positiveNTiles;
+                } else {
+                  fn = GOOD_GRADIENT;
+                  ntileBins = negativeNTiles;
+                }
+              } else {
+                fn = GRADIENT;
+                ntileBins = positiveNTiles;
+              }
+              let start = ntileBins[0];
+              for (let i = 1; i < ntileBins.length; i++) {
+                let ntileMax = ntileBins[i];
+                if (value <= ntileMax) {
+                  let percentage = (value - start) / (ntileMax - start);
+                  return fn((i - 1 + percentage) / ntiles).hex();
+                }
+                start = ntileMax;
+              }
+              return 'rgba(0,0,0,0)';
+            },
+            legendPoints: negativeNTiles.concat(positiveNTiles).reverse()
+          }
+        };
         let selection = null;
         geojson.eachLayer(function(layer) {
           layer.on({
@@ -297,6 +352,13 @@
           let modzctaValues = {};
           let modzctaTests = {};
           let modzctaCases = {};
+          let fix = function(x) {
+            if (analysis == 'newTestsTrend') {
+              // rate of tests decreasing is bad
+              x *= -1;
+            }
+            return x;
+          };
           geojson.eachLayer(function (layer) {
             const {properties} = layer.feature;
             const modzcta = properties.MODZCTA;
@@ -318,50 +380,34 @@
               properties.caseSeries.push(row.caseEwma);
               properties.positiveRateSeries.push(row.caseEwma / row.testEwma);
             });
-            const value = analyses[analysis](rows, data, days);
+            let value = analyses[analysis](rows, data, days);
             if (isFinite(value)) {
-              values.push(value);
-              
+              values.push(fix(value));
             }
             properties.value = value;
           });
           values.sort(function(a,b){
             return a-b;
           });
-          const ntiles = 10;
-          let ntileBins = [];
-          for (let i = 0; i < ntiles; i++) {
-            let idx = Math.round(values.length * (i/ntiles));
-            ntileBins.push(values[idx]);
-          }
-          ntileBins.push(values[values.length - 1]);
-          
-          let color = function(value) {
-            let start = values[0];
-            for (let i = 1; i < ntileBins.length; i++) {
-              let ntileMax = ntileBins[i];
-              if (value <= ntileMax) {
-                let percentage = (value - start) / (ntileMax - start);
-                return COLORS((i - 1 + percentage) / ntiles).hex();
-              }
-              start = ntileMax;
-            }
-            return 'rgba(0,0,0,0)';
-          }
-          
+          let trend = analysis.indexOf('Trend') > 0;
+          let {color, legendPoints} = colorScale(values, trend);
           let legendLabels = []
-          for (let i = 0; i < ntileBins.length; i++) {
-            let value = ntileBins[i];
-            legendLabels.push('<i style="background:'+color(value)+'"></i> '+prettyValue(value));
+          for (let i = 0; i < legendPoints.length; i++) {
+            let value = legendPoints[i];
+            let label = '<i style="background:'+color(value)+'"></i> '+prettyValue(fix(value));
+            if (i == 0) {
+              label += ' &#x1f44e;';
+            }else if (i == legendPoints.length - 1) {
+              label += ' &#x1f44d;';
+            }
+            legendLabels.push(label);
           }
           legendDiv.innerHTML = legendLabels.join("<br>");
-          
-          
           geojson.eachLayer(function (layer) {
             const {properties} = layer.feature;
             const modzcta = properties.MODZCTA;
-            const value = properties.value;
-            layer.setStyle({fillColor: color(value)});
+            const {value} = properties;
+            layer.setStyle({fillColor: color(fix(value))});
             if (!properties.data) {
               return;
             }
@@ -386,7 +432,7 @@
             positiveRateLine.setAttribute('fill','lightgreen');
             positiveRateLine.setAttribute('stroke-width',1);
             sparkline.sparkline(positiveRateLine, properties.positiveRateSeries || []);
-            let content = '<div><b>'+properties.MODZCTA+':<br>'+properties.data.name.replace(/\//g,'<br>')+'</b><br>'+analysisEl.value+':<br>'+prettyValue(properties.value)+'<br>New Case trend:<br>'+caseLine.outerHTML+'<br>Test trend:<br>'+testLine.outerHTML+'<br>Positive Test Rate trend:<br>'+positiveRateLine.outerHTML+'</div>';
+            let content = '<div><b>'+properties.MODZCTA+':<br>'+properties.data.name.replace(/\//g,'<br>')+'</b><br>'+analysis+':<br>'+prettyValue(value)+'<br>New Cases:<br>'+caseLine.outerHTML+'<br>New Tests:<br>'+testLine.outerHTML+'<br>Positive Test Rate:<br>'+positiveRateLine.outerHTML+'</div>';
             layer.bindPopup(content);
           });
         }
