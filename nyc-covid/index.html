@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8">
-    <title>NYC COVID-19 by ZIP Code</title>
+    <title>NYC COVID-19</title>
     <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.6.0/dist/leaflet.css" integrity="sha512-xwE/Az9zrjBIphAcBb3F6JVqxf46+CDLwfLMHloNu6KEQCAWi6HcDUbeOfBIptF7tcCzusKFjFw2yuvEpDL9wQ==" crossorigin=""/>
         <script src="https://unpkg.com/leaflet@1.6.0/dist/leaflet.js" integrity="sha512-gZwIG9x3wUXg2hdXF6+rVkLF/0Vi9U8D2Ntg4Ga5I5BZpVkVxlJWbSQtXPSiUTtC0TjtGOmxa1AJPuV0CPthew==" crossorigin=""></script>
@@ -30,6 +30,12 @@
         height: 100%;
         flex:1;
       }
+      .hidden {
+        display:none;
+      }
+      #demographics {
+        margin:10px;
+      }
       .info { padding: 6px 8px; background: white; background: rgba(255,255,255,1.0); box-shadow: 0 0 15px rgba(0,0,0,0.2); border-radius: 5px; } .info h4 { margin: 0 0 5px; color: #777; }
       .legend { text-align: left; line-height: 18px; color: #555; } .legend i { width: 18px; height: 18px; float: left; margin-right: 8px; opacity: 0.7; }
       @media only screen and (max-width: 600px) {
@@ -41,7 +47,7 @@
   <body>
     <div id="content">
       <div id="controls">
-        <div><b>NYC COVID-19 by ZIP Code</b></div>
+        <div><b>NYC COVID-19</b></div>
         <div>Date: <input type="date" id="end"></div>
         <div>Lookback: <select id="lookback">
             <option value="3">3 days</option>
@@ -59,8 +65,18 @@
           <option>newTestsTrend</option>
         </select></div>
         <div><button id="locate">Go to My Location</button></div>
+        <div><button id="toggle-demographics">Toggle Demographics</button></div>
       </div>
       <div id="map-container"></div>
+      <div id="demographics" class="hidden">
+        <select id="demographic-type">
+          <option>age</option>
+          <option>race</option>
+          <option>poverty</option>
+          <option>sex</option>
+        </select><br>
+        <div id="demographics-body"></div>
+      </div>
     </div>
     <script>
       const GRADIENT = chroma.scale([
@@ -73,6 +89,12 @@
       ]);
       const GOOD_GRADIENT = chroma.scale(['#1a9641', '#a6d96a', '#ffffbf']);
       const BAD_GRADIENT = chroma.scale(['#ffffbf', '#fdae61', '#d7191c']);
+      const POVERTY_SORT = {
+        "Low poverty":0,
+        "Medium poverty":1,
+        "High poverty":2,
+        "Very high poverty":3
+      }
       
       function prettyValue(value){
         if(!isFinite(value)) {
@@ -89,50 +111,55 @@
         let minYmd = '2099-01-01';
         let maxYmd = '2000-01-01';
         let windowSize = 7;
-        Object.values(dataJson).forEach(data => {
-          if (!data.rows) {
-            return;
+        let dataRows = {};
+        for (let type in dataJson) {
+          if (type === "generated") {
+            continue;
           }
-          data.rows = data.rows.map(row => {
-            let ymd = row[0];
-            let timestampMs = new Date(`${ymd}T00:00:00`).getTime();
-            if (ymd < minYmd) {
-              minYmd = ymd;
+          dataRows[type] = {};
+          if (type==='poverty') {
+            dataJson[type] = dataJson[type].map(function(x){
+              x.sortOrder = POVERTY_SORT[x.id];
+              return x;
+            }).sort(function(a,b){
+              return a.sortOrder - b.sortOrder;
+            });
+          }
+          for (let i in dataJson[type]) {
+            let value = dataJson[type][i];
+            dataRows[type][value.id] = value;
+          }
+          Object.values(dataRows[type]).forEach(data => {
+            if (!data.rows) {
+              return;
             }
-            if (ymd > maxYmd) {
-              maxYmd = ymd
-            }
-            let cases = row[1];
-            let tests = row[2];
-            return {
-              ymd,
-              timestampMs,
-              cases,
-              tests
-            }
+            data.rows = data.rows.map(row => {
+              let ymd = row[0];
+              let timestampMs = new Date(`${ymd}T00:00:00`).getTime();
+              if (ymd < minYmd) {
+                minYmd = ymd;
+              }
+              if (ymd > maxYmd) {
+                maxYmd = ymd
+              }
+              let cases = row[1];
+              let tests = row[2];
+              let hospitalizations = row[3];
+              let deaths = row[4];
+              return {
+                ymd,
+                timestampMs,
+                cases,
+                tests,
+                hospitalizations,
+                deaths
+              }
+            });
           });
-          for (let i = 0; i < data.rows.length; i++) {
-            let row = data.rows[i];
-            const start = i - windowSize;
-            const from = start >= 0 ? start : 0;
-            const to = i + windowSize + 1;
-            let count = 0;
-            let sumTests = 0;
-            let sumCases = 0;
-            for (let j = from; j < to && j < data.rows.length; j += 1) {
-              sumTests += data.rows[j].tests;
-              sumCases += data.rows[j].cases;
-              count += 1;
-            }
-            row.testEwma = sumTests / count;
-            row.caseEwma = sumCases / count;
-          }
-        });
-        
-        
+        }
         shapeJson.objects.collection.geometries.forEach(x=> {
           let {properties} = x;
-          properties.data = dataJson[properties.MODZCTA];
+          properties.data = dataRows.modzcta[properties.MODZCTA];
         });
         
         let map = L.map('map-container');
@@ -144,6 +171,20 @@
       
         bglayer_Positron.addTo(map);
         
+        let contentEl = document.getElementById('map-container');
+        let demographicsEl = document.getElementById('demographics');
+        document.getElementById('toggle-demographics').onclick = function() {
+          if (demographicsEl.getAttribute('class')) {
+            contentEl.classList.add("hidden");
+            demographicsEl.classList.remove("hidden");
+          } else {
+            contentEl.classList.remove("hidden");
+            demographicsEl.classList.add("hidden");
+          }
+        };
+        
+        let demographicTypeEl = document.getElementById('demographic-type');
+        let demographicsBody = document.getElementById('demographics-body');
         let lookbackEl = document.getElementById('lookback');
         let endEl = document.getElementById('end');
         let analysisEl = document.getElementById('analysis');
@@ -198,11 +239,15 @@
         let accumulate = function(rows) {
           const sum = {
             cases:0,
-            tests:0
+            tests:0,
+            hospitalizations:0,
+            deaths:0
           };
           rows.forEach(x => {
             sum.cases += x.cases;
             sum.tests += x.tests;
+            sum.hospitalizations += x.hospitalizations;
+            sum.deaths += x.deaths;
           })
           return sum;
         };
@@ -255,22 +300,42 @@
             return (sum.cases / days) / data.population * 100000;
           },
           newCasesTrend: trend(function(row, data) {
-            return row.caseEwma / data.population * 100000;
+            return row.cases / data.population * 100000;
           }),
           positiveTestPercent: function(rows, data, days) {
             const sum = accumulate(rows);
             return sum.cases / sum.tests * 100;
           },
           positiveTestPercentTrend: trend(function(row, data) {
-            return row.caseEwma / row.testEwma * 100;
+            return row.cases / row.tests * 100;
           }),
           newTests: function(rows, data, days) {
             const sum = accumulate(rows);
             return (sum.tests / days) / data.population * 100000;
           },
           newTestsTrend: trend(function(row, data) {
-            return row.testEwma / data.population * 100000;
-          })
+            return row.tests / data.population * 100000;
+          }),
+          newHospitalizations: function(rows, data, days) {
+            const sum = accumulate(rows);
+            return (sum.hospitalizations / days) / data.population * 100000;
+          },
+          newDeaths: function(rows, data, days) {
+            const sum = accumulate(rows);
+            return (sum.deaths / days) / data.population * 100000;
+          },
+          totalCases: function(rows, data, days) {
+            const sum = accumulate(rows);
+            return sum.cases;
+          },
+          totalHospitalizations: function(rows, data, days) {
+            const sum = accumulate(rows);
+            return sum.hospitalizations;
+          },
+          totalDeaths: function(rows, data, days) {
+            const sum = accumulate(rows);
+            return sum.deaths;
+          },
         }
         let colorScale = function(values, trend) {
           let ntiles = trend ? 5 : 10;
@@ -348,7 +413,7 @@
           let lookback = days * 86400000;
           let end = new Date(endEl.value+"T00:00:00").getTime();
           let start = end - lookback;
-          let values = [];
+          
           let modzctaValues = {};
           let modzctaTests = {};
           let modzctaCases = {};
@@ -359,33 +424,41 @@
             }
             return x;
           };
-          geojson.eachLayer(function (layer) {
-            const {properties} = layer.feature;
-            const modzcta = properties.MODZCTA;
-            const {data} = properties;
-            if (!data) {
-              return;
+          let typeValues = {}
+          for (let type in dataRows) {
+            let typeData = dataRows[type];
+            typeValues[type] = [];
+            for (let i in typeData){
+              let data = typeData[i];
+              
+              const rows = data.rows.filter(x => {
+                const {timestampMs} = x;
+                return timestampMs >= start && timestampMs <= end;
+              });
+              data.testSeries = [];
+              data.caseSeries = [];
+              data.positiveRateSeries = [];
+              data.hospitalizationSeries = [];
+              data.deathSeries = [];
+              rows.forEach(row => {
+                data.testSeries.push(row.tests);
+                data.caseSeries.push(row.cases);
+                data.positiveRateSeries.push(row.cases / row.tests);
+                data.hospitalizationSeries.push(row.hospitalizations);
+                data.deathSeries.push(row.deaths);
+              });
+              for (let a in analyses) {
+                data[a] = analyses[a](rows, data, days);
+              }
+              let value = data[analysis];
+              if (isFinite(value)) {
+                typeValues[type].push(fix(value));
+              }
+              data.value = value;
             }
-            const rows = data.rows.filter(x => {
-              const {timestampMs} = x;
-              return timestampMs >= start && timestampMs <= end;
-            });
-            let testSum = 0;
-            let caseSum = 0;
-            properties.testSeries = [];
-            properties.caseSeries = [];
-            properties.positiveRateSeries = [];
-            rows.forEach(row => {
-              properties.testSeries.push(row.testEwma);
-              properties.caseSeries.push(row.caseEwma);
-              properties.positiveRateSeries.push(row.caseEwma / row.testEwma);
-            });
-            let value = analyses[analysis](rows, data, days);
-            if (isFinite(value)) {
-              values.push(fix(value));
-            }
-            properties.value = value;
-          });
+          }
+          // draw map
+          let values = typeValues.modzcta
           values.sort(function(a,b){
             return a-b;
           });
@@ -404,41 +477,81 @@
           }
           legendDiv.innerHTML = legendLabels.join("<br>");
           geojson.eachLayer(function (layer) {
-            const {properties} = layer.feature;
-            const modzcta = properties.MODZCTA;
-            const {value} = properties;
-            layer.setStyle({fillColor: color(fix(value))});
-            if (!properties.data) {
+            const {data} = layer.feature.properties;
+            if (!data) {
               return;
             }
+            const {value, caseSeries, testSeries, positiveRateSeries} = data;
+            layer.setStyle({fillColor: color(fix(value))});
+            
             let caseLine = document.createElement("SVG");
             caseLine.setAttribute('width',100);
             caseLine.setAttribute('height',20);
             caseLine.setAttribute('stroke','red');
             caseLine.setAttribute('fill','pink');
             caseLine.setAttribute('stroke-width',1);
-            sparkline.sparkline(caseLine, properties.caseSeries || []);
+            sparkline.sparkline(caseLine, caseSeries || []);
             let testLine = document.createElement("SVG");
             testLine.setAttribute('width',100);
             testLine.setAttribute('height',20);
             testLine.setAttribute('stroke','blue');
             testLine.setAttribute('fill','lightblue');
             testLine.setAttribute('stroke-width',1);
-            sparkline.sparkline(testLine, properties.testSeries || []);
+            sparkline.sparkline(testLine, testSeries || []);
             let positiveRateLine = document.createElement("SVG");
             positiveRateLine.setAttribute('width',100);
             positiveRateLine.setAttribute('height',20);
             positiveRateLine.setAttribute('stroke','green');
             positiveRateLine.setAttribute('fill','lightgreen');
             positiveRateLine.setAttribute('stroke-width',1);
-            sparkline.sparkline(positiveRateLine, properties.positiveRateSeries || []);
-            let content = '<div><b>'+properties.MODZCTA+':<br>'+properties.data.name.replace(/\//g,'<br>')+'</b><br>'+analysis+':<br>'+prettyValue(value)+'<br>New Cases:<br>'+caseLine.outerHTML+'<br>New Tests:<br>'+testLine.outerHTML+'<br>Positive Test Rate:<br>'+positiveRateLine.outerHTML+'</div>';
-            layer.bindPopup(content);
+            sparkline.sparkline(positiveRateLine, positiveRateSeries || []);
+            let info = '<div><b>'+data.id+':<br>'+data.name.replace(/\//g,'<br>')+'</b><br>'+analysis+':<br>'+prettyValue(value)+'<br>New Cases:<br>'+caseLine.outerHTML+'<br>New Tests:<br>'+testLine.outerHTML+'<br>Positive Test Rate:<br>'+positiveRateLine.outerHTML+'</div>';
+            layer.bindPopup(info);
           });
+          // draw demographics
+          let demographicSparkline = function(series, color, fillColor){
+            let svg = document.createElement("SVG");
+            svg.setAttribute('width',100);
+            svg.setAttribute('height',20);
+            svg.setAttribute('stroke',color);
+            svg.setAttribute('fill',fillColor);
+            svg.setAttribute('stroke-width',1);
+            sparkline.sparkline(svg, series);
+            return svg.outerHTML;
+          }
+          let demographicData = dataJson[demographicTypeEl.value];
+          let out = "";
+          out += "<table border=1 cellspacing=0 cellpadding=1 style='font-size:10px'><tr><th>group</th><th>%pop</th><th colspan=2>cases</th><th colspan=2>hospitalizations</th><th colspan=2>deaths</th></tr>"
+          let populationTotal = 0;
+          let caseTotal = 0;
+          let hospitalizationTotal = 0;
+          let deathTotal = 0;
+          for (var i in demographicData) {
+            let data = demographicData[i];
+            populationTotal+=data.population;
+            caseTotal+=data.totalCases;
+            hospitalizationTotal+=data.totalHospitalizations;
+            deathTotal+=data.totalDeaths;
+          }
+          
+          for (var i in demographicData) {
+            let data = demographicData[i];
+            out += "<tr><th>"+data.id+"</th>";
+            out += "<td>"+prettyValue(data.population/populationTotal * 100)+"%</td>";
+            out += "<td>"+demographicSparkline(data.caseSeries, 'red', 'pink') + "</td><td>"+ prettyValue(data.newCases)+"<br>"+prettyValue(data.totalCases/caseTotal * 100)+"%</td>";
+            out += "<td>"+demographicSparkline(data.hospitalizationSeries, 'orange', 'khaki')+ "</td><td>"+ prettyValue(data.newHospitalizations)+"<br>"+prettyValue(data.totalHospitalizations/hospitalizationTotal * 100)+"%</td>";
+            out += "<td>"+demographicSparkline(data.deathSeries, 'purple', 'violet')+ "</td><td>"+ prettyValue(data.newDeaths)+"<br>"+prettyValue(data.totalDeaths/deathTotal * 100)+"%</td>";
+            out += "</tr>";
+          }
+          
+          out += "</table>"
+          demographicsBody.innerHTML = out;
+          
         }
         lookbackEl.onchange = redraw;
         endEl.onchange = redraw;
         analysisEl.onchange = redraw;
+        demographicTypeEl.onchange = redraw;
         redraw();
         document.getElementById('locate').onclick = function() {
           map.locate({setView: true, maxZoom: 13});
