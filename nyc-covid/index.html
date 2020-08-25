@@ -79,6 +79,7 @@
       <div id="map-container"></div>
       <div id="demographics" class="hidden">
         <select id="demographic-type">
+          <option>all</option>
           <option>age</option>
           <option>race</option>
           <option>poverty</option>
@@ -521,42 +522,58 @@
             layer.bindPopup(info);
           });
           // draw demographics
-          let demographicSparkline = function(series, color, fillColor){
+          let demographicSparkline = function(series, color, fillColor, width, height){
             let svg = document.createElement("SVG");
-            svg.setAttribute('width',100);
-            svg.setAttribute('height',20);
+            svg.setAttribute('width',width || 100);
+            svg.setAttribute('height',height || 20);
             svg.setAttribute('stroke',color);
             svg.setAttribute('fill',fillColor);
             svg.setAttribute('stroke-width',1);
             sparkline.sparkline(svg, series);
             return svg.outerHTML;
           }
-          let demographicData = dataJson[demographicTypeEl.value];
+          let demographicType = demographicTypeEl.value
+          let demographicData = dataJson[demographicType];
           let out = "";
-          out += "<table border=1 cellspacing=0 cellpadding=1 style='font-size:10px'><tr><th>group</th><th>%pop</th><th colspan=2>cases</th><th colspan=2>hospitalizations</th><th colspan=2>deaths</th></tr>"
-          let populationTotal = 0;
-          let caseTotal = 0;
-          let hospitalizationTotal = 0;
-          let deathTotal = 0;
-          for (var i in demographicData) {
-            let data = demographicData[i];
-            populationTotal+=data.population;
-            caseTotal+=data.totalCases;
-            hospitalizationTotal+=data.totalHospitalizations;
-            deathTotal+=data.totalDeaths;
-          }
+          if (demographicType == 'all') {
+            let data = demographicData[0];
+            console.log(demographicData, data);
+            out += "<p>Cases: "+prettyValue(data.newCases)+"</p>";
+            out += demographicSparkline(data.caseSeries, 'red', 'pink', 250,50);
+            out += "<p>Tests: "+prettyValue(data.newTests)+"</p>";
+            out += demographicSparkline(data.testSeries, 'blue', 'lightblue', 250,50);
+            out += "<p>Positive Test Rate: "+prettyValue(data.positiveTestPercent)+"</p>";
+            out += demographicSparkline(data.positiveRateSeries, 'green', 'lightgreen', 250,50);
+            out += "<p>Hospitalizations: "+prettyValue(data.newHospitalizations)+"</p>";
+            out += demographicSparkline(data.hospitalizationSeries, 'orange', 'khaki', 250,50);
+            out += "<p>Deaths: "+prettyValue(data.newDeaths)+"</p>";
+            out += demographicSparkline(data.deathSeries, 'purple', 'violet', 250,50);
+          } else {
+            out += "<table border=1 cellspacing=0 cellpadding=1 style='font-size:10px'><tr><th>group</th><th>%pop</th><th colspan=2>cases</th><th colspan=2>hospitalizations</th><th colspan=2>deaths</th></tr>"
+            let populationTotal = 0;
+            let caseTotal = 0;
+            let hospitalizationTotal = 0;
+            let deathTotal = 0;
+            for (var i in demographicData) {
+              let data = demographicData[i];
+              populationTotal+=data.population;
+              caseTotal+=data.totalCases;
+              hospitalizationTotal+=data.totalHospitalizations;
+              deathTotal+=data.totalDeaths;
+            }
           
-          for (var i in demographicData) {
-            let data = demographicData[i];
-            out += "<tr><th>"+data.id+"</th>";
-            out += "<td>"+prettyValue(data.population/populationTotal * 100)+"%</td>";
-            out += "<td>"+demographicSparkline(data.caseSeries, 'red', 'pink') + "</td><td>"+ prettyValue(data.newCases)+"<br>"+prettyValue(data.totalCases/caseTotal * 100)+"%</td>";
-            out += "<td>"+demographicSparkline(data.hospitalizationSeries, 'orange', 'khaki')+ "</td><td>"+ prettyValue(data.newHospitalizations)+"<br>"+prettyValue(data.totalHospitalizations/hospitalizationTotal * 100)+"%</td>";
-            out += "<td>"+demographicSparkline(data.deathSeries, 'purple', 'violet')+ "</td><td>"+ prettyValue(data.newDeaths)+"<br>"+prettyValue(data.totalDeaths/deathTotal * 100)+"%</td>";
-            out += "</tr>";
-          }
+            for (var i in demographicData) {
+              let data = demographicData[i];
+              out += "<tr><th>"+data.id+"</th>";
+              out += "<td>"+prettyValue(data.population/populationTotal * 100)+"%</td>";
+              out += "<td>"+demographicSparkline(data.caseSeries, 'red', 'pink') + "</td><td>"+ prettyValue(data.newCases)+"<br>"+prettyValue(data.totalCases/caseTotal * 100)+"%</td>";
+              out += "<td>"+demographicSparkline(data.hospitalizationSeries, 'orange', 'khaki')+ "</td><td>"+ prettyValue(data.newHospitalizations)+"<br>"+prettyValue(data.totalHospitalizations/hospitalizationTotal * 100)+"%</td>";
+              out += "<td>"+demographicSparkline(data.deathSeries, 'purple', 'violet')+ "</td><td>"+ prettyValue(data.newDeaths)+"<br>"+prettyValue(data.totalDeaths/deathTotal * 100)+"%</td>";
+              out += "</tr>";
+            }
           
-          out += "</table>"
+            out += "</table>"
+          }
           demographicsBody.innerHTML = out;
           
         }
