@@ -81,6 +81,7 @@
         <select id="demographic-type">
           <option>all</option>
           <option>age</option>
+          <option>boro</option>
           <option>race</option>
           <option>poverty</option>
           <option>sex</option>
@@ -537,7 +538,6 @@
           let out = "";
           if (demographicType == 'all') {
             let data = demographicData[0];
-            console.log(demographicData, data);
             out += "<p>Cases: "+prettyValue(data.newCases)+"</p>";
             out += demographicSparkline(data.caseSeries, 'red', 'pink', 250,50);
             out += "<p>Tests: "+prettyValue(data.newTests)+"</p>";
