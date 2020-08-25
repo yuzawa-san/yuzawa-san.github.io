@@ -297,8 +297,11 @@
             let x = [];
             let y = [];
             for (let i = 0 ; i < rows.length; i++) {
-              x.push(rows[i].timestampMs);
-              y.push(extract(rows[i], data));
+              let value = extract(rows[i], data);
+              if (isFinite(value)) {
+                x.push(rows[i].timestampMs);
+                y.push(value);
+              }
             }
             return regress(x,y).slope * 86400000;
           }
@@ -452,7 +455,7 @@
               rows.forEach(row => {
                 data.testSeries.push(row.tests);
                 data.caseSeries.push(row.cases);
-                data.positiveRateSeries.push(row.cases / row.tests);
+                data.positiveRateSeries.push(row.tests === 0 ? 0 : row.cases / row.tests);
                 data.hospitalizationSeries.push(row.hospitalizations);
                 data.deathSeries.push(row.deaths);
               });
