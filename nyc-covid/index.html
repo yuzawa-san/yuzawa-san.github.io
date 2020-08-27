@@ -39,8 +39,26 @@
         height: 100%;
         flex:1;
       }
-      .hidden {
-        display:none;
+      *[hidden] {
+        display: none;
+      }
+
+      #tooltip {
+        position: absolute;
+        background: rgba(0, 0, 0, .7);
+        color: #fff;
+        padding: 2px 5px;
+        font-size: 12px;
+        white-space: nowrap;
+        z-index: 9999;
+      }
+      .sparkline--cursor {
+        stroke: orange;
+      }
+
+      .sparkline--spot {
+        fill: red;
+        stroke: red;
       }
       #demographics {
         margin:10px;
@@ -77,7 +95,7 @@
         <div><button id="toggle-demographics">Toggle Demographics</button></div>
       </div>
       <div id="map-container"></div>
-      <div id="demographics" class="hidden">
+      <div id="demographics" hidden="true">
         <select id="demographic-type">
           <option>all</option>
           <option>age</option>
@@ -88,6 +106,7 @@
         </select><br>
         <div id="demographics-body"></div>
       </div>
+      <span id="tooltip" hidden="true"></span>
     </div>
     <script>
       const GRADIENT = chroma.scale([
@@ -106,7 +125,20 @@
         "High poverty":2,
         "Very high poverty":3
       }
-      
+      let tooltip = document.getElementById("tooltip");
+      let tooltipOptions = {
+        interactive:true,
+        onmousemove: function(event, datapoint) {
+          tooltip.hidden = false;
+          tooltip.textContent = `${datapoint.ymd}: ${prettyValue(datapoint.value)}`;
+          tooltip.style.top = `${event.clientY+ 20}px`;
+          tooltip.style.left = `${event.clientX + 20}px`;
+        },
+
+        onmouseout: function() {
+          tooltip.hidden = true;
+        }
+      };
       function prettyValue(value){
         if(!isFinite(value)) {
           return "n/a";
@@ -185,12 +217,12 @@
         let contentEl = document.getElementById('map-container');
         let demographicsEl = document.getElementById('demographics');
         document.getElementById('toggle-demographics').onclick = function() {
-          if (demographicsEl.getAttribute('class')) {
-            contentEl.classList.add("hidden");
-            demographicsEl.classList.remove("hidden");
+          if (demographicsEl.hidden) {
+            contentEl.hidden = true;
+            demographicsEl.hidden = false;
           } else {
-            contentEl.classList.remove("hidden");
-            demographicsEl.classList.add("hidden");
+            contentEl.hidden = false;
+            demographicsEl.hidden = true;
           }
         };
         
@@ -342,6 +374,10 @@
             const sum = accumulate(rows);
             return sum.cases;
           },
+          totalTests: function(rows, data, days) {
+            const sum = accumulate(rows);
+            return sum.tests;
+          },
           totalHospitalizations: function(rows, data, days) {
             const sum = accumulate(rows);
             return sum.hospitalizations;
@@ -455,11 +491,12 @@
               data.hospitalizationSeries = [];
               data.deathSeries = [];
               rows.forEach(row => {
-                data.testSeries.push(row.tests);
-                data.caseSeries.push(row.cases);
-                data.positiveRateSeries.push(row.tests === 0 ? 0 : row.cases / row.tests);
-                data.hospitalizationSeries.push(row.hospitalizations);
-                data.deathSeries.push(row.deaths);
+                let {ymd} = row;
+                data.testSeries.push({ymd,value:row.tests / data.population * 100000});
+                data.caseSeries.push({ymd,value:row.cases / data.population * 100000});
+                data.positiveRateSeries.push({ymd,value:row.tests === 0 ? 0 : row.cases / row.tests * 100});
+                data.hospitalizationSeries.push({ymd,value:row.hospitalizations / data.population * 100000});
+                data.deathSeries.push({ymd,value:row.deaths / data.population * 100000});
               });
               for (let a in analyses) {
                 data[a] = analyses[a](rows, data, days);
@@ -495,87 +532,171 @@
             if (!data) {
               return;
             }
-            const {value, caseSeries, testSeries, positiveRateSeries} = data;
+            const {value, caseSeries, testSeries, positiveRateSeries, deathSeries} = data;
             layer.setStyle({fillColor: color(fix(value))});
             
-            let caseLine = document.createElement("SVG");
+            let caseLine = document.createElementNS("http://www.w3.org/2000/svg", "svg");
             caseLine.setAttribute('width',100);
             caseLine.setAttribute('height',20);
             caseLine.setAttribute('stroke','red');
             caseLine.setAttribute('fill','pink');
             caseLine.setAttribute('stroke-width',1);
-            sparkline.sparkline(caseLine, caseSeries || []);
-            let testLine = document.createElement("SVG");
+            sparkline.sparkline(caseLine, caseSeries || [], tooltipOptions);
+            let testLine = document.createElementNS("http://www.w3.org/2000/svg", "svg");
             testLine.setAttribute('width',100);
             testLine.setAttribute('height',20);
             testLine.setAttribute('stroke','blue');
             testLine.setAttribute('fill','lightblue');
             testLine.setAttribute('stroke-width',1);
-            sparkline.sparkline(testLine, testSeries || []);
-            let positiveRateLine = document.createElement("SVG");
+            sparkline.sparkline(testLine, testSeries || [], tooltipOptions);
+            let positiveRateLine = document.createElementNS("http://www.w3.org/2000/svg", "svg");
             positiveRateLine.setAttribute('width',100);
             positiveRateLine.setAttribute('height',20);
             positiveRateLine.setAttribute('stroke','green');
             positiveRateLine.setAttribute('fill','lightgreen');
             positiveRateLine.setAttribute('stroke-width',1);
-            sparkline.sparkline(positiveRateLine, positiveRateSeries || []);
-            let info = '<div><b>'+data.id+':<br>'+data.name.replace(/\//g,'<br>')+'</b><br>'+analysis+':<br>'+prettyValue(value)+'<br>New Cases:<br>'+caseLine.outerHTML+'<br>New Tests:<br>'+testLine.outerHTML+'<br>Positive Test Rate:<br>'+positiveRateLine.outerHTML+'</div>';
-            layer.bindPopup(info);
+            sparkline.sparkline(positiveRateLine, positiveRateSeries || [], tooltipOptions);
+            let deathLine = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+            deathLine.setAttribute('width',100);
+            deathLine.setAttribute('height',20);
+            deathLine.setAttribute('stroke','purple');
+            deathLine.setAttribute('fill','violet');
+            deathLine.setAttribute('stroke-width',1);
+            sparkline.sparkline(deathLine, deathSeries || [], tooltipOptions);
+            layer.bindPopup(function(){
+              let div = document.createElement('div');
+              let heading = document.createElement('b');
+              heading.innerHTML = data.id+':<br>'+data.name.replace(/\//g,'<br>');
+              div.appendChild(heading);
+              let caption = document.createElement('div');
+              caption.innerHTML = analysis+':<br>'+prettyValue(value);
+              div.appendChild(caption);
+              let label = document.createElement('div');
+              label.innerText = 'New Cases:';
+              div.appendChild(label);
+              div.appendChild(caseLine);
+              
+              label = document.createElement('div');
+              label.innerText = 'New Tests:';
+              div.appendChild(label);
+              div.appendChild(testLine);
+              
+              label = document.createElement('div');
+              label.innerText = 'Positive Test Rate:';
+              div.appendChild(label);
+              div.appendChild(positiveRateLine);
+              
+              label = document.createElement('div');
+              label.innerText = 'New Deaths:';
+              div.appendChild(label);
+              div.appendChild(deathLine);
+              return div;
+            });
           });
           // draw demographics
           let demographicSparkline = function(series, color, fillColor, width, height){
-            let svg = document.createElement("SVG");
+            let svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
             svg.setAttribute('width',width || 100);
             svg.setAttribute('height',height || 20);
             svg.setAttribute('stroke',color);
             svg.setAttribute('fill',fillColor);
             svg.setAttribute('stroke-width',1);
-            sparkline.sparkline(svg, series);
-            return svg.outerHTML;
+            sparkline.sparkline(svg, series, tooltipOptions);
+            return svg;
           }
           let demographicType = demographicTypeEl.value
           let demographicData = dataJson[demographicType];
-          let out = "";
+          demographicsBody.innerHTML = "";
+          let append = function(text) {
+            let p = document.createElement("p");
+            p.innerText = text
+            demographicsBody.appendChild(p);
+          }
           if (demographicType == 'all') {
             let data = demographicData[0];
-            out += "<p>Cases: "+prettyValue(data.newCases)+"</p>";
-            out += demographicSparkline(data.caseSeries, 'red', 'pink', 250,50);
-            out += "<p>Tests: "+prettyValue(data.newTests)+"</p>";
-            out += demographicSparkline(data.testSeries, 'blue', 'lightblue', 250,50);
-            out += "<p>Positive Test Rate: "+prettyValue(data.positiveTestPercent)+"</p>";
-            out += demographicSparkline(data.positiveRateSeries, 'green', 'lightgreen', 250,50);
-            out += "<p>Hospitalizations: "+prettyValue(data.newHospitalizations)+"</p>";
-            out += demographicSparkline(data.hospitalizationSeries, 'orange', 'khaki', 250,50);
-            out += "<p>Deaths: "+prettyValue(data.newDeaths)+"</p>";
-            out += demographicSparkline(data.deathSeries, 'purple', 'violet', 250,50);
+            append("Cases: "+prettyValue(data.newCases)+" per 100k per day");
+            demographicsBody.appendChild(demographicSparkline(data.caseSeries, 'red', 'pink', 250,50));
+            append("Tests: "+prettyValue(data.newTests)+" per 100k per day");
+            demographicsBody.appendChild(demographicSparkline(data.testSeries, 'blue', 'lightblue', 250,50));
+            append("Positive Test Rate: "+prettyValue(data.positiveTestPercent)+"%");
+            demographicsBody.appendChild(demographicSparkline(data.positiveRateSeries, 'green', 'lightgreen', 250,50));
+            append("Hospitalizations: "+prettyValue(data.newHospitalizations)+" per 100k per day");
+            demographicsBody.appendChild(demographicSparkline(data.hospitalizationSeries, 'orange', 'khaki', 250,50));
+            append("Deaths: "+prettyValue(data.newDeaths)+" per 100k per day");
+            demographicsBody.appendChild(demographicSparkline(data.deathSeries, 'purple', 'violet', 250,50));
           } else {
-            out += "<table border=1 cellspacing=0 cellpadding=1 style='font-size:10px'><tr><th>group</th><th>%pop</th><th colspan=2>cases</th><th colspan=2>hospitalizations</th><th colspan=2>deaths</th></tr>"
+            let html = "<table border=1 cellspacing=0 cellpadding=1 style='font-size:10px'><tr><th>group</th><th>%pop</th><th colspan=2>cases</th>";
+            if (demographicType == 'boro') {
+              html += "<th colspan=2>tests</th><th colspan=2>positive test rate</th>";
+            }
+            html += "<th colspan=2>hospitalizations</th><th colspan=2>deaths</th></tr><tbody id='demographic-rows'></tbody></table>";
+            let table = document.createRange().createContextualFragment(html);
+            demographicsBody.appendChild(table);
+            let rows = document.getElementById('demographic-rows');
             let populationTotal = 0;
             let caseTotal = 0;
+            let testTotal = 0;
             let hospitalizationTotal = 0;
             let deathTotal = 0;
             for (var i in demographicData) {
               let data = demographicData[i];
               populationTotal+=data.population;
               caseTotal+=data.totalCases;
+              testTotal+=data.totalTests;
               hospitalizationTotal+=data.totalHospitalizations;
               deathTotal+=data.totalDeaths;
             }
           
             for (var i in demographicData) {
               let data = demographicData[i];
-              out += "<tr><th>"+data.id+"</th>";
-              out += "<td>"+prettyValue(data.population/populationTotal * 100)+"%</td>";
-              out += "<td>"+demographicSparkline(data.caseSeries, 'red', 'pink') + "</td><td>"+ prettyValue(data.newCases)+"<br>"+prettyValue(data.totalCases/caseTotal * 100)+"%</td>";
-              out += "<td>"+demographicSparkline(data.hospitalizationSeries, 'orange', 'khaki')+ "</td><td>"+ prettyValue(data.newHospitalizations)+"<br>"+prettyValue(data.totalHospitalizations/hospitalizationTotal * 100)+"%</td>";
-              out += "<td>"+demographicSparkline(data.deathSeries, 'purple', 'violet')+ "</td><td>"+ prettyValue(data.newDeaths)+"<br>"+prettyValue(data.totalDeaths/deathTotal * 100)+"%</td>";
-              out += "</tr>";
+              let row = document.createElement("tr");
+              rows.appendChild(row);
+              let td = document.createElement("th");
+              td.innerText = data.id;
+              row.appendChild(td);
+              td = document.createElement("td");
+              td.innerText = prettyValue(data.population/populationTotal * 100)+"%";
+              row.appendChild(td);
+              
+              td = document.createElement("td");
+              td.appendChild(demographicSparkline(data.caseSeries, 'red', 'pink'));
+              row.appendChild(td);
+              td = document.createElement("td");
+              td.innerHTML = prettyValue(data.newCases)+"<br>"+prettyValue(data.totalCases/caseTotal * 100)+"%";
+              row.appendChild(td);
+              
+              if (demographicType == 'boro') {
+                td = document.createElement("td");
+                td.appendChild(demographicSparkline(data.testSeries, 'blue', 'lightblue'));
+                row.appendChild(td);
+                td = document.createElement("td");
+                td.innerHTML = prettyValue(data.newTests)+"<br>"+prettyValue(data.totalTests/testTotal * 100)+"%";
+                row.appendChild(td);
+                
+                td = document.createElement("td");
+                td.appendChild(demographicSparkline(data.positiveRateSeries, 'green', 'lightgreen'));
+                row.appendChild(td);
+                td = document.createElement("td");
+                td.innerHTML = prettyValue(data.positiveTestPercent)+"%";
+                row.appendChild(td);
+              }
+              
+              
+              td = document.createElement("td");
+              td.appendChild(demographicSparkline(data.hospitalizationSeries, 'orange', 'khaki'));
+              row.appendChild(td);
+              td = document.createElement("td");
+              td.innerHTML = prettyValue(data.newHospitalizations)+"<br>"+prettyValue(data.totalHospitalizations/hospitalizationTotal * 100)+"%";
+              row.appendChild(td);
+              
+              td = document.createElement("td");
+              td.appendChild(demographicSparkline(data.deathSeries, 'purple', 'violet'));
+              row.appendChild(td);
+              td = document.createElement("td");
+              td.innerHTML = prettyValue(data.newDeaths)+"<br>"+prettyValue(data.totalDeaths/deathTotal * 100)+"%";
+              row.appendChild(td);
             }
-          
-            out += "</table>"
           }
-          demographicsBody.innerHTML = out;
-          
         }
         lookbackEl.onchange = redraw;
         endEl.onchange = redraw;
