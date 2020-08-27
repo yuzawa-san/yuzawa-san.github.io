@@ -532,7 +532,7 @@
             if (!data) {
               return;
             }
-            const {value, caseSeries, testSeries, positiveRateSeries, deathSeries} = data;
+            const {value, caseSeries, testSeries, positiveRateSeries} = data;
             layer.setStyle({fillColor: color(fix(value))});
             
             let caseLine = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -556,13 +556,6 @@
             positiveRateLine.setAttribute('fill','lightgreen');
             positiveRateLine.setAttribute('stroke-width',1);
             sparkline.sparkline(positiveRateLine, positiveRateSeries || [], tooltipOptions);
-            let deathLine = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-            deathLine.setAttribute('width',100);
-            deathLine.setAttribute('height',20);
-            deathLine.setAttribute('stroke','purple');
-            deathLine.setAttribute('fill','violet');
-            deathLine.setAttribute('stroke-width',1);
-            sparkline.sparkline(deathLine, deathSeries || [], tooltipOptions);
             layer.bindPopup(function(){
               let div = document.createElement('div');
               let heading = document.createElement('b');
@@ -585,11 +578,6 @@
               label.innerText = 'Positive Test Rate:';
               div.appendChild(label);
               div.appendChild(positiveRateLine);
-              
-              label = document.createElement('div');
-              label.innerText = 'New Deaths:';
-              div.appendChild(label);
-              div.appendChild(deathLine);
               return div;
             });
           });
