@@ -92,6 +92,7 @@
           <option>newTests</option>
           <option>newTestsTrend</option>
         </select></div>
+        <div><input type="checkbox" id="leveled"> levels</div>
         <div><button id="locate">Go to My Location</button></div>
       </div>
       <div id="map-container"></div>
@@ -108,6 +109,48 @@
       ]);
       const GOOD_GRADIENT = chroma.scale(['#1a9641', '#a6d96a', '#ffffbf']);
       const BAD_GRADIENT = chroma.scale(['#ffffbf', '#fdae61', '#d7191c']);
+      const LEVELS = {
+        newCases: [{
+          bound:25,
+          color: "red"
+        },{
+          bound:10,
+          color: "orange"
+        },{
+          bound:1,
+          color: "yellow"
+        },{
+          bound:0,
+          color: "green"
+        }],
+        positiveTestPercent: [{
+          bound:5,
+          color: "red"
+        },{
+          bound:4,
+          color: "orange"
+        },{
+          bound:3,
+          color: "yellow"
+        },{
+          bound:2,
+          color: "lightgreen"
+        },{
+          bound:1,
+          color: "green"
+        },{
+          bound:0,
+          color: "darkgreen"
+        }],
+        newTests: [{
+          bound: 250,
+          color: "green"
+        },{
+          bound: 0,
+          color: "red"
+        }]
+      }
+      let leveled = document.getElementById("leveled");
       let tooltip = document.getElementById("tooltip");
       let tooltipOptions = {
         interactive:true,
@@ -303,10 +346,18 @@
             const sum = accumulate(rows);
             return sum.cases / rows.length;
           },
+          newCasesLevel: function(rows, data, days) {
+            const sum = accumulate(rows);
+            return sum.cases / rows.length;
+          },
           newCasesTrend: trend(function(row, data) {
             return row.cases;
           }),
           positiveTestPercent: function(rows, data, days) {
+            const sum = accumulate(rows);
+            return sum.positiveRate / rows.length;
+          },
+          positiveTestPercentLevel: function(rows, data, days) {
             const sum = accumulate(rows);
             return sum.positiveRate / rows.length;
           },
@@ -317,11 +368,30 @@
             const sum = accumulate(rows);
             return sum.tests / rows.length;
           },
+          newTestsLevel: function(rows, data, days) {
+            const sum = accumulate(rows);
+            return sum.tests / rows.length;
+          },
           newTestsTrend: trend(function(row, data) {
             return row.tests;
           })
         }
-        let colorScale = function(values, trend) {
+        let colorScale = function(values, analysis) {
+          let levels = LEVELS[analysis];
+          if (levels && leveled.checked) {
+            return {
+              color: function(value) {
+                for (let i = 0; i < levels.length; i++) {
+                  if (value >= levels[i].bound) {
+                    return levels[i].color;
+                  }
+                }
+                return 'rgba(0,0,0,0)';
+              },
+              legendPoints: levels.map(x=> x.bound)
+            }
+          }
+          let trend = analysis.indexOf('Trend') > 0;
           let ntiles = trend ? 5 : 10;
           let negatives = [];
           let positives = [];
@@ -443,12 +513,15 @@
           values.sort(function(a,b){
             return a-b;
           });
-          let trend = analysis.indexOf('Trend') > 0;
-          let {color, legendPoints} = colorScale(values, trend);
+          let {color, legendPoints} = colorScale(values, analysis);
           let legendLabels = []
           for (let i = 0; i < legendPoints.length; i++) {
             let value = legendPoints[i];
-            let label = '<i style="background:'+color(value)+'"></i> '+prettyValue(fix(value));
+            let label = '<i style="background:'+color(value)+'"></i> ';
+            if (LEVELS[analysis] && leveled.checked) {
+              label += "&gt;"
+            }
+            label += prettyValue(fix(value));
             if (i == 0) {
               label += ' &#x1f44e;';
             }else if (i == legendPoints.length - 1) {
@@ -515,6 +588,7 @@
         lookbackEl.onchange = redraw;
         endEl.onchange = redraw;
         analysisEl.onchange = redraw;
+        leveled.onclick = redraw;
         redraw();
         document.getElementById('locate').onclick = function() {
           map.locate({setView: true, maxZoom: 13});
