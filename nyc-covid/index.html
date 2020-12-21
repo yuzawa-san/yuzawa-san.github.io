@@ -60,8 +60,8 @@
         fill: red;
         stroke: red;
       }
-      #demographics {
-        margin:10px;
+      #days {
+        width:50px;
       }
       .info { padding: 6px 8px; background: white; background: rgba(255,255,255,1.0); box-shadow: 0 0 15px rgba(0,0,0,0.2); border-radius: 5px; } .info h4 { margin: 0 0 5px; color: #777; }
       .legend { text-align: left; line-height: 18px; color: #555; } .legend i { width: 18px; height: 18px; float: left; margin-right: 8px; opacity: 0.7; }
@@ -75,7 +75,8 @@
     <div id="content">
       <div id="controls">
         <div><b>NYC COVID-19</b></div>
-        <div>Date: <input type="date" id="end"></div>
+        <div><small id="daterange"></small></div>
+        <div>Days Ago: <input type="number" id="days" value="0" min="0"></div>
         <div>Lookback: <select id="lookback">
             <option value="3">3 days</option>
             <option value="7">1 week</option>
@@ -92,7 +93,7 @@
           <option>newTests</option>
           <option>newTestsTrend</option>
         </select></div>
-        <div><input type="checkbox" id="leveled"> levels</div>
+        <div><input type="checkbox" id="leveled" checked> absolute</div>
         <div><button id="locate">Go to My Location</button></div>
       </div>
       <div id="map-container"></div>
@@ -111,43 +112,49 @@
       const BAD_GRADIENT = chroma.scale(['#ffffbf', '#fdae61', '#d7191c']);
       const LEVELS = {
         newCases: [{
-          bound:25,
-          color: "red"
+          bound:40,
+          color: "#A70A00"
+        },{
+          bound:30,
+          color: "#C71F14"
+        },{
+          bound:20,
+          color: "#EA7100"
         },{
           bound:10,
-          color: "orange"
+          color: "#FBAC00"
         },{
           bound:1,
-          color: "yellow"
+          color: "#FED758"
         },{
           bound:0,
-          color: "green"
+          color: "#80868B"
         }],
         positiveTestPercent: [{
+          bound:10,
+          color: "#A70A00"
+        },{
+          bound:7.5,
+          color: "#C71F14"
+        },{
           bound:5,
-          color: "red"
+          color: "#EA7100"
         },{
-          bound:4,
-          color: "orange"
-        },{
-          bound:3,
-          color: "yellow"
-        },{
-          bound:2,
-          color: "lightgreen"
+          bound:2.5,
+          color: "#FBAC00"
         },{
           bound:1,
-          color: "green"
+          color: "#FED758"
         },{
           bound:0,
-          color: "darkgreen"
+          color: "#80868B"
         }],
         newTests: [{
           bound: 250,
-          color: "green"
+          color: "#80868B"
         },{
           bound: 0,
-          color: "red"
+          color: "#A70A00"
         }]
       }
       let leveled = document.getElementById("leveled");
@@ -177,8 +184,7 @@
         let shapeResponse = await fetch('nyc.topo.json');
         let shapeJson = await shapeResponse.json();
         
-        let minYmd = '2099-01-01';
-        let maxYmd = '2000-01-01';
+        let maxTimestampMs = 0;
         let windowSize = 7;
         let dataRows = {};
         for (let type in dataJson) {
@@ -197,11 +203,8 @@
             data.rows = data.rows.map(row => {
               let ymd = row[0];
               let timestampMs = new Date(`${ymd}T00:00:00`).getTime();
-              if (ymd < minYmd) {
-                minYmd = ymd;
-              }
-              if (ymd > maxYmd) {
-                maxYmd = ymd
+              if (timestampMs > maxTimestampMs) {
+                maxTimestampMs = timestampMs;
               }
               let cases = row[1];
               let tests = row[2];
@@ -232,11 +235,10 @@
         
         let contentEl = document.getElementById('map-container');
         let lookbackEl = document.getElementById('lookback');
-        let endEl = document.getElementById('end');
+        let dateRangeEl = document.getElementById('daterange');
+        let daysAgoEl = document.getElementById('days');
         let analysisEl = document.getElementById('analysis');
-        endEl.min = minYmd;
-        endEl.max = maxYmd;
-        endEl.value = maxYmd;
+        
         
         let legend = L.control({position: 'topleft'});
         let legendDiv = L.DomUtil.create('div', 'info legend');
@@ -465,8 +467,9 @@
           let analysis = analysisEl.value;
           let days = parseInt(lookbackEl.value);
           let lookback = days * 86400000;
-          let end = new Date(endEl.value+"T00:00:00").getTime();
+          let end = maxTimestampMs - parseInt(daysAgoEl.value) * 86400000;
           let start = end - lookback;
+          dateRangeEl.innerText = new Date(start).toISOString().split("T")[0] + " - " + new Date(end).toISOString().split("T")[0];
           
           let modzctaValues = {};
           let modzctaTests = {};
@@ -514,7 +517,7 @@
             return a-b;
           });
           let {color, legendPoints} = colorScale(values, analysis);
-          let legendLabels = []
+          let legendLabels = [];
           for (let i = 0; i < legendPoints.length; i++) {
             let value = legendPoints[i];
             let label = '<i style="background:'+color(value)+'"></i> ';
@@ -586,9 +589,9 @@
           });
         }
         lookbackEl.onchange = redraw;
-        endEl.onchange = redraw;
         analysisEl.onchange = redraw;
         leveled.onclick = redraw;
+        daysAgoEl.onchange = redraw;
         redraw();
         document.getElementById('locate').onclick = function() {
           map.locate({setView: true, maxZoom: 13});
